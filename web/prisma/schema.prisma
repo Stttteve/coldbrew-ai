@@ -1,0 +1,234 @@
+// Coldbrew AI — Prisma schema
+// Covers all v1 tables from the project outline, Section 11.
+// Also includes the minimal tables Auth.js v5 needs (Account, Session, VerificationToken)
+// so email/password + Google SSO login work alongside the app-specific ProviderAccount
+// table (which is distinct: it stores the OAuth grant for creating Gmail drafts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// ─────────────────────────  Auth.js v5 tables  ─────────────────────────
+// (used ONLY for login identity; distinct from ProviderAccount below)
+//
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+//
+// ─────────────────────────  Core domain models  ─────────────────────────
+//
+enum Plan {
+  free
+  pro
+  team
+}
+
+model User {
+  id                  String   @id @default(uuid())
+  email               String   @unique
+  emailVerified       DateTime?
+  name                String?
+  image               String?
+  passwordHash        String?  // null for SSO-only users
+  defaultSignature    String?  @db.Text
+  defaultLinks        Json?    // { cv, github, portfolio }
+  /// Original filename of the uploaded resume (PDF / Word).
+  resumeFileName      String?
+  resumeMimeType      String?
+  /// Relative path under the app upload root, e.g. `{userId}/resume.pdf`.
+  resumeStorageKey    String?
+  plan                Plan     @default(free)
+  monthlyTokenUsage   Int      @default(0)
+  usageResetAt        DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  accounts          Account[]
+  sessions          Session[]
+  providerAccounts  ProviderAccount[]
+  campaigns         Campaign[]
+  auditLogs         AuditLog[]
+}
+
+enum MailProvider {
+  google
+  microsoft
+  nylas
+}
+
+enum ProviderStatus {
+  active
+  revoked
+  error
+}
+
+// ProviderAccount = the user's authorization for US to write drafts to their mailbox.
+// This is intentionally separate from Auth.js's `Account` table, which stores
+// login identities (SSO). A single User may have 0..N ProviderAccounts.
+model ProviderAccount {
+  id                  String         @id @default(uuid())
+  userId              String
+  provider            MailProvider
+  providerUserEmail   String
+  accessTokenCipher   Bytes          // KMS/AES-GCM envelope encrypted
+  refreshTokenCipher  Bytes          // KMS/AES-GCM envelope encrypted
+  tokenExpiresAt      DateTime
+  scopes              String[]
+  status              ProviderStatus @default(active)
+  lastError           String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@unique([userId, provider, providerUserEmail])
+  @@index([userId])
+}
+
+enum PurposeCategory {
+  college_research
+  internship_job
+  coffee_chat
+  networking_followup
+  general_inquiry
+  sales_partnership
+  alumni_intro
+}
+
+enum CampaignStatus {
+  draft
+  enriching
+  generating
+  ready
+  pushed
+  archived
+}
+
+model Campaign {
+  id                         String          @id @default(uuid())
+  userId                     String
+  name                       String
+  briefing                   Json?
+  /// Verbatim-style transcript of the guided briefing chat (fed into draft prompts).
+  briefingConversationContext String?       @db.Text
+  purposeCategory            PurposeCategory?
+  sendingProviderAccountId   String?
+  /// When true, outbound Gmail drafts/sends attach the user's saved resume.
+  attachResume               Boolean         @default(false)
+  status                     CampaignStatus  @default(draft)
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
+
+  user                     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sendingProviderAccount   ProviderAccount?  @relation(fields: [sendingProviderAccountId], references: [id], onDelete: SetNull)
+  recipients               RecipientDraft[]
+
+  @@index([userId])
+}
+
+/// Order must match PostgreSQL enum (new values append after existing members).
+enum RecipientStatus {
+  pending
+  enriching
+  enriched
+  drafting
+  drafted
+  approved
+  pushed
+  error
+  sent
+}
+
+model RecipientDraft {
+  id                String          @id @default(uuid())
+  campaignId        String
+  inputRaw          String          @db.Text
+  email             String?
+  name              String?
+  title             String?
+  organization      String?
+  linkedinUrl       String?
+  enrichment        Json?
+  subject           String?
+  body              String?         @db.Text
+  referencedFacts   String[]
+  status            RecipientStatus @default(pending)
+  providerDraftId   String?
+  deepLink          String?
+  errorReason       String?
+  /// Per-recipient extra files for Gmail: [{ id, storageKey, fileName, mimeType, size }]
+  extraAttachments  Json?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+model EnrichmentCache {
+  keyHash    String   @id
+  provider   String
+  data       Json
+  fetchedAt  DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
