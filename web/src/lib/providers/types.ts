@@ -36,12 +36,14 @@ export interface DraftMessage {
 
 export interface CreatedDraft {
   providerDraftId: string;
+  providerThreadId?: string;
   deepLink: string;
 }
 
 /** Result of sending a message via Gmail `users.messages.send`. */
 export interface SentMessage {
   providerMessageId: string;
+  providerThreadId?: string;
   deepLink: string;
 }
 

@@ -72,6 +72,13 @@ const serverSchema = z.object({
    * thread — simpler to reason about and no worker to babysit.
    */
   USE_QUEUE_WORKERS: booleanString.default(false),
+
+  /**
+   * Secret shared between Vercel Cron and our `/api/cron/*` endpoints.
+   * Vercel sets an `Authorization: Bearer <token>` header on cron invocations
+   * when the project has `CRON_SECRET` defined — we compare against this.
+   */
+  CRON_SECRET: z.string().min(16).optional(),
 });
 
 const clientSchema = z.object({

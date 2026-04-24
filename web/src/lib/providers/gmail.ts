@@ -108,6 +108,7 @@ export const gmailProvider: MailProvider = {
     };
     return {
       providerDraftId: data.id,
+      providerThreadId: data.message.threadId,
       deepLink: `https://mail.google.com/mail/u/0/#drafts/${data.message.id}`,
     };
   },
@@ -132,6 +133,7 @@ export const gmailProvider: MailProvider = {
     const thread = data.threadId ?? data.id;
     return {
       providerMessageId: data.id,
+      providerThreadId: data.threadId,
       deepLink: `https://mail.google.com/mail/u/0/#all/${thread}`,
     };
   },

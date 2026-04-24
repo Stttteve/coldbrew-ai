@@ -8,6 +8,7 @@ import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { withAppendedSignature } from "@/lib/email/compose-signature";
+import { withAppendedResumeMention } from "@/lib/email/resume-mention";
 import { MAX_EXTRA_ATTACHMENTS_PER_RECIPIENT } from "@/lib/uploads/config";
 import { recipientDraftReadiness } from "@/lib/llm/draft-readiness";
 import type { RecipientView } from "./types";
@@ -22,6 +23,8 @@ export function RecipientCard({
   recipient,
   defaultSignature,
   providerAccountId,
+  attachResume,
+  hasResume,
   onPatch,
   onReplaceRecipient,
   onRemove,
@@ -31,6 +34,10 @@ export function RecipientCard({
   /** From User.defaultSignature — shown once after body in preview & on send (not doubled in stored body). */
   defaultSignature: string | null;
   providerAccountId: string | null;
+  /** Project-level toggle: include user's resume on push/send. */
+  attachResume: boolean;
+  /** User has uploaded a resume in Settings. */
+  hasResume: boolean;
   onPatch: (body: Partial<RecipientView>) => Promise<void> | void;
   onReplaceRecipient: (r: RecipientView) => void;
   onRemove: () => void;
@@ -63,7 +70,6 @@ export function RecipientCard({
     setTitle(recipient.title ?? "");
     setOrg(recipient.organization ?? "");
     setProfileUrl(recipient.linkedinUrl ?? "");
-    if (recipient.status === "sent") setEdit(false);
   }, [recipient]);
 
   async function saveDraft() {
@@ -108,7 +114,9 @@ export function RecipientCard({
     recipient.status === "sent";
 
   const canCollectiveOrApproveFlow =
-    recipient.status === "drafted" || recipient.status === "approved";
+    recipient.status === "drafted" ||
+    recipient.status === "approved" ||
+    recipient.status === "sent";
 
   const readiness = recipientDraftReadiness({
     status: recipient.status,
@@ -117,12 +125,14 @@ export function RecipientCard({
   });
 
   const sigTrim = defaultSignature?.trim() ?? "";
-  const bodyPreviewText = withAppendedSignature(body?.trim() ?? "", defaultSignature);
+  const bodyPreviewText = withAppendedSignature(
+    withAppendedResumeMention(body?.trim() ?? "", { attachResume, hasResume }),
+    defaultSignature,
+  );
 
   const canSingleSend =
     Boolean(providerAccountId) &&
-    recipient.status !== "sent" &&
-    ["drafted", "approved", "pushed"].includes(recipient.status) &&
+    ["drafted", "approved", "pushed", "sent"].includes(recipient.status) &&
     Boolean(recipient.email?.trim()) &&
     Boolean(recipient.subject?.trim()) &&
     Boolean(recipient.body?.trim());
@@ -192,6 +202,17 @@ export function RecipientCard({
                 Emailed
               </span>
             ) : null}
+            {recipient.repliedAt ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-sky-900"
+                title={`Reply detected${recipient.lastReplyAt ? " · " + new Date(recipient.lastReplyAt).toLocaleString() : ""}`}
+              >
+                <span aria-hidden>↩</span> Replied
+                {recipient.replyCount && recipient.replyCount > 1
+                  ? ` ×${recipient.replyCount}`
+                  : ""}
+              </span>
+            ) : null}
           </div>
           <div className="mt-0.5 truncate text-sm text-muted-foreground">
             {recipient.email ?? "—"}
@@ -210,13 +231,17 @@ export function RecipientCard({
               variant="destructive"
               size="sm"
               disabled={sendPending}
-              title="Send this one email now from your connected Gmail"
+              title={
+                recipient.status === "sent"
+                  ? "Send another message to this recipient (will appear as a follow-up in the same Gmail thread)"
+                  : "Send this one email now from your connected Gmail"
+              }
               onClick={() => {
                 setSendErr(null);
                 setConfirmSend(true);
               }}
             >
-              Send
+              {recipient.status === "sent" ? "Send again" : "Send"}
             </Button>
           )}
           {recipient.deepLink && (
@@ -373,7 +398,7 @@ export function RecipientCard({
                   className="h-11 text-base font-medium"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  disabled={!edit || recipient.status === "sent"}
+                  disabled={!edit}
                 />
               </Field>
 
@@ -384,7 +409,7 @@ export function RecipientCard({
                     : "Body preview"
                 }
               >
-                {edit && recipient.status !== "sent" ? (
+                {edit ? (
                   <>
                     <textarea
                       value={body}
@@ -482,84 +507,80 @@ export function RecipientCard({
                             ({Math.ceil(a.size / 1024)} KB)
                           </span>
                         </span>
-                        {recipient.status !== "sent" ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 shrink-0 px-2 text-xs text-destructive"
-                            disabled={attachPending}
-                            onClick={async () => {
-                              setAttachErr(null);
-                              setAttachPending(true);
-                              try {
-                                const res = await fetch(
-                                  `/api/campaigns/${projectId}/recipients/${recipient.id}/attachments?attachmentId=${encodeURIComponent(a.id)}`,
-                                  { method: "DELETE" },
-                                );
-                                const data = (await res.json().catch(() => ({}))) as {
-                                  recipient?: RecipientView;
-                                };
-                                if (!res.ok || !data.recipient) {
-                                  setAttachErr("Remove failed.");
-                                  return;
-                                }
-                                onReplaceRecipient(data.recipient);
-                              } finally {
-                                setAttachPending(false);
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-xs text-destructive"
+                          disabled={attachPending}
+                          onClick={async () => {
+                            setAttachErr(null);
+                            setAttachPending(true);
+                            try {
+                              const res = await fetch(
+                                `/api/campaigns/${projectId}/recipients/${recipient.id}/attachments?attachmentId=${encodeURIComponent(a.id)}`,
+                                { method: "DELETE" },
+                              );
+                              const data = (await res.json().catch(() => ({}))) as {
+                                recipient?: RecipientView;
+                              };
+                              if (!res.ok || !data.recipient) {
+                                setAttachErr("Remove failed.");
+                                return;
                               }
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        ) : null}
+                              onReplaceRecipient(data.recipient);
+                            } finally {
+                              setAttachPending(false);
+                            }
+                          }}
+                        >
+                          Remove
+                        </Button>
                       </li>
                     ))}
                   </ul>
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">No extra files.</p>
                 )}
-                {recipient.status !== "sent" ? (
-                  <div className="mt-2">
-                    <input
-                      type="file"
-                      accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                      disabled={
-                        attachPending ||
-                        extras.length >= MAX_EXTRA_ATTACHMENTS_PER_RECIPIENT
-                      }
-                      className="block w-full max-w-xs text-xs file:mr-2 file:rounded file:border file:bg-muted file:px-2 file:py-1"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = "";
-                        if (!file) return;
-                        setAttachErr(null);
-                        setAttachPending(true);
-                        try {
-                          const fd = new FormData();
-                          fd.set("file", file);
-                          const res = await fetch(
-                            `/api/campaigns/${projectId}/recipients/${recipient.id}/attachments`,
-                            { method: "POST", body: fd },
+                <div className="mt-2">
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    disabled={
+                      attachPending ||
+                      extras.length >= MAX_EXTRA_ATTACHMENTS_PER_RECIPIENT
+                    }
+                    className="block w-full max-w-xs text-xs file:mr-2 file:rounded file:border file:bg-muted file:px-2 file:py-1"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      setAttachErr(null);
+                      setAttachPending(true);
+                      try {
+                        const fd = new FormData();
+                        fd.set("file", file);
+                        const res = await fetch(
+                          `/api/campaigns/${projectId}/recipients/${recipient.id}/attachments`,
+                          { method: "POST", body: fd },
+                        );
+                        const data = (await res.json().catch(() => ({}))) as {
+                          recipient?: RecipientView;
+                          message?: string;
+                        };
+                        if (!res.ok || !data.recipient) {
+                          setAttachErr(
+                            data.message ?? "Upload failed (type or size).",
                           );
-                          const data = (await res.json().catch(() => ({}))) as {
-                            recipient?: RecipientView;
-                            message?: string;
-                          };
-                          if (!res.ok || !data.recipient) {
-                            setAttachErr(
-                              data.message ?? "Upload failed (type or size).",
-                            );
-                            return;
-                          }
-                          onReplaceRecipient(data.recipient);
-                        } finally {
-                          setAttachPending(false);
+                          return;
                         }
-                      }}
-                    />
-                  </div>
-                ) : null}
+                        onReplaceRecipient(data.recipient);
+                      } finally {
+                        setAttachPending(false);
+                      }
+                    }}
+                  />
+                </div>
                 {attachErr ? (
                   <p className="mt-1 text-xs text-destructive">{attachErr}</p>
                 ) : null}
@@ -581,8 +602,46 @@ export function RecipientCard({
                 </div>
               ) : null}
 
+              {recipient.repliedAt ? (
+                <div className="rounded-md border border-sky-200 bg-sky-50/70 px-3 py-2.5 text-sm text-sky-950">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">
+                      Reply
+                      {recipient.replyCount && recipient.replyCount > 1
+                        ? ` (${recipient.replyCount} messages)`
+                        : ""}
+                    </span>
+                    {recipient.lastReplyFrom ? (
+                      <span className="truncate text-xs text-sky-900/80">
+                        from {recipient.lastReplyFrom}
+                      </span>
+                    ) : null}
+                    {recipient.lastReplyAt ? (
+                      <span className="text-xs text-sky-900/70">
+                        · {new Date(recipient.lastReplyAt).toLocaleString()}
+                      </span>
+                    ) : null}
+                  </div>
+                  {recipient.lastReplySnippet ? (
+                    <p className="line-clamp-3 text-[13px] leading-relaxed text-sky-950/90">
+                      {recipient.lastReplySnippet}
+                    </p>
+                  ) : null}
+                  {recipient.deepLink ? (
+                    <a
+                      href={recipient.deepLink}
+                      className="mt-1 inline-block text-xs font-medium underline"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open thread in Gmail
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-4">
-                {recipient.status === "sent" ? null : edit ? (
+                {edit ? (
                   <div className="flex flex-wrap gap-2">
                     <Button variant="accent" onClick={saveDraft}>
                       Save changes
@@ -600,10 +659,10 @@ export function RecipientCard({
                   </div>
                 ) : (
                   <Button variant="outline" onClick={() => setEdit(true)}>
-                    Edit draft
+                    {recipient.status === "sent" ? "Edit for follow-up" : "Edit draft"}
                   </Button>
                 )}
-                {canCollectiveOrApproveFlow ? (
+                {canCollectiveOrApproveFlow && recipient.status !== "sent" ? (
                   <Button
                     variant={
                       recipient.status === "approved" ? "accent" : "outline"

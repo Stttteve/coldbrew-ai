@@ -2,8 +2,8 @@
 
 Single source of truth for **what is done, what is in progress, and what comes next**. Update after every meaningful chunk of work so anyone (you, a teammate, or a future agent) can pick up from exactly the right place.
 
-**Last updated:** 2026-04-23 PT
-**Current phase:** Phases 0 – 6 complete in their first end-to-end form · Phases 7–9 pending
+**Last updated:** 2026-04-24 PT
+**Current phase:** Phases 0 – 6 complete in their first end-to-end form · Phase 6.5 reply tracking shipped · Phases 7–9 pending
 **Target Vercel URL:** pending Vercel project deployment / assigned production domain
 **Changelog:** see [§ Changelog](#changelog) below for a timestamped log of every code change.
 
@@ -16,6 +16,57 @@ Legend: ✅ done · 🟡 in progress · ⏳ pending · 🚧 blocked on external 
 Append newest entries at the top. Each entry: ISO timestamp, short title, one
 paragraph of "what / why", and a files list. Keep entries atomic — one
 meaningful change per entry.
+
+### 2026-04-24 — Reply tracking (Phase 6.5)
+
+**What.** Each project now tracks replies to messages sent through Coldbrew.
+After a recipient is sent, we capture the Gmail thread id; a Vercel cron
+hits `/api/cron/check-replies` every 15 minutes, polls each tracked thread
+via `gmail.users.threads.get`, and counts incoming messages (any message
+without the `SENT` or `DRAFT` label). When a reply is detected we store
+`repliedAt`, `replyCount`, `lastReplyAt`, `lastReplyFrom`, and a 280-char
+`lastReplySnippet`. The campaign page surfaces this with a "Replied"
+chip on each recipient card, a reply-snippet block in the expanded view,
+a `N replies` pill in the panel header, and a "Refresh replies" button
+that force-polls (bypassing the 10-min per-row throttle).
+
+**Why.** Users had no way to tell from inside Coldbrew which cold emails
+had landed. Bouncing back to Gmail to check breaks the dashboard loop.
+
+**How.**
+- New migration `20260423120000_reply_tracking` adds idempotent columns +
+  indexes to `RecipientDraft` (`providerThreadId`, `repliedAt`,
+  `replyCount`, `lastReplyAt`, `lastReplyFrom`, `lastReplySnippet`,
+  `lastCheckedAt`).
+- `MailProvider.createDraft` and `sendMessage` now return `providerThreadId`;
+  collective send/push and per-row send persist it.
+- New `web/src/lib/replies/{gmail-threads,check}.ts` module groups work by
+  ProviderAccount (one access-token decrypt per inbox), throttles to a
+  10-minute recheck window unless `force: true`, and is silent on per-row
+  Gmail hiccups (the next run retries).
+- `vercel.json` (new) registers the 15-minute cron; the route checks
+  `Authorization: Bearer ${CRON_SECRET}` when set.
+- `RecipientView`/`RecipientClientJson` carry the new reply fields to the
+  client; `RecipientCard` renders a "Replied" chip + snippet block;
+  `RecipientPanel` adds the stats pill and refresh action.
+
+**Files.**
+- `web/prisma/migrations/20260423120000_reply_tracking/migration.sql`
+- `web/prisma/schema.prisma`
+- `web/src/lib/providers/{types,gmail}.ts`
+- `web/src/app/api/campaigns/[id]/{send,push,replies}/route.ts`
+- `web/src/app/api/campaigns/[id]/recipients/[rid]/send/route.ts`
+- `web/src/lib/replies/gmail-threads.ts`, `web/src/lib/replies/check.ts`
+- `web/src/app/api/cron/check-replies/route.ts`, `web/vercel.json`
+- `web/src/lib/env.ts` (adds `CRON_SECRET`)
+- `web/src/lib/campaigns/recipient-json.ts`
+- `web/src/components/campaign/{types,recipient-card,recipient-panel}.tsx`
+
+**Operational.** After deploy:
+1. Apply the migration to Supabase prod (direct connection, not pooler).
+2. Set `CRON_SECRET` in Vercel project envs.
+3. Vercel will start invoking `/api/cron/check-replies` at the configured
+   schedule on the next deploy.
 
 ### 2026-04-23 — Vercel-ready auth/OAuth redirects
 

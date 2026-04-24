@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { recipientToClientJson } from "@/lib/campaigns/recipient-json";
 import { withAppendedSignature } from "@/lib/email/compose-signature";
+import { withAppendedResumeMention } from "@/lib/email/resume-mention";
 import { collectOutboundAttachments } from "@/lib/email/collect-outbound-attachments";
 import { prisma } from "@/lib/db";
 import {
@@ -115,7 +116,10 @@ export const POST = withErrorHandler(
               ],
               subject: r.subject!,
               bodyText: withAppendedSignature(
-                r.body!,
+                withAppendedResumeMention(r.body!, {
+                  attachResume: campaign.attachResume,
+                  hasResume: Boolean(user?.resumeStorageKey),
+                }),
                 user?.defaultSignature ?? null,
               ),
               campaignId: campaign.id,
@@ -126,6 +130,7 @@ export const POST = withErrorHandler(
               data: {
                 status: RecipientStatus.sent,
                 providerDraftId: result.providerMessageId,
+                providerThreadId: result.providerThreadId ?? null,
                 deepLink: result.deepLink,
                 errorReason: null,
               },

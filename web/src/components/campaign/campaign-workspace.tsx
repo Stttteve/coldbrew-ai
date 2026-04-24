@@ -113,6 +113,8 @@ export function CampaignWorkspace({
             recipients={recipients}
             setRecipients={setRecipients}
             providerAccountId={providerAccountId}
+            attachResume={attachResume}
+            hasResume={hasResume}
           />
         </div>
       </div>

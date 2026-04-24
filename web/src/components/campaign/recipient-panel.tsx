@@ -22,6 +22,8 @@ export function RecipientPanel({
   recipients,
   setRecipients,
   providerAccountId,
+  attachResume,
+  hasResume,
 }: {
   projectId: string;
   defaultSignature: string | null;
@@ -29,8 +31,10 @@ export function RecipientPanel({
   setRecipients: React.Dispatch<React.SetStateAction<RecipientView[]>>;
   /** Connected Gmail used for per-recipient Send. */
   providerAccountId: string | null;
+  attachResume: boolean;
+  hasResume: boolean;
 }) {
-  const [mode, setMode] = useState<"paste" | "csv" | "manual">("paste");
+  const [mode, setMode] = useState<"manual" | "paste" | "csv">("manual");
   const [pasteText, setPasteText] = useState("");
   const [manualEmail, setManualEmail] = useState("");
   const [manualName, setManualName] = useState("");
@@ -38,12 +42,16 @@ export function RecipientPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
+  const [refreshingReplies, setRefreshingReplies] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+
   const stats = useMemo(() => {
     const s = {
       total: recipients.length,
       enriched: 0,
       drafted: 0,
       sent: 0,
+      replied: 0,
       error: 0,
     };
     for (const r of recipients) {
@@ -58,10 +66,39 @@ export function RecipientPanel({
       if (r.status === "drafted" || r.status === "approved" || r.status === "pushed")
         s.drafted++;
       if (r.status === "sent") s.sent++;
+      if (r.repliedAt) s.replied++;
       if (r.status === "error") s.error++;
     }
     return s;
   }, [recipients]);
+
+  async function refreshReplies() {
+    setRefreshingReplies(true);
+    setRefreshNote(null);
+    try {
+      const res = await fetch(`/api/campaigns/${projectId}/replies`, {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        checked?: number;
+        newReplies?: number;
+        recipients?: RecipientView[];
+        message?: string;
+      };
+      if (!res.ok) {
+        setRefreshNote(data.message ?? "Refresh failed.");
+        return;
+      }
+      if (data.recipients) setRecipients(data.recipients);
+      setRefreshNote(
+        data.newReplies
+          ? `${data.newReplies} new repl${data.newReplies === 1 ? "y" : "ies"}.`
+          : "Up to date.",
+      );
+    } finally {
+      setRefreshingReplies(false);
+    }
+  }
 
   async function addFromPaste() {
     if (!pasteText.trim()) return;
@@ -175,25 +212,45 @@ export function RecipientPanel({
 
   return (
     <Card className="flex min-h-0 w-full flex-col lg:h-full lg:flex-1">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+      <CardHeader className="flex flex-col gap-2 pb-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-lg">
           Recipients ({stats.total})
         </CardTitle>
-        <div className="flex gap-1 text-xs">
+        <div className="flex flex-wrap items-center gap-1 text-xs">
           <Pill tone="muted">{stats.total} total</Pill>
           <Pill tone="ok">{stats.enriched} enriched</Pill>
           <Pill tone="ok">{stats.drafted} drafted</Pill>
-          {stats.sent > 0 && (
-            <Pill tone="ok">{stats.sent} sent</Pill>
+          {stats.sent > 0 && <Pill tone="ok">{stats.sent} sent</Pill>}
+          {stats.replied > 0 && (
+            <Pill tone="reply">
+              {stats.replied} repl{stats.replied === 1 ? "y" : "ies"}
+            </Pill>
           )}
           {stats.error > 0 && (
             <Pill tone="err">{stats.error} error{stats.error > 1 ? "s" : ""}</Pill>
           )}
+          {stats.sent > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-1 h-7 px-2 text-xs"
+              disabled={refreshingReplies}
+              onClick={refreshReplies}
+              title="Poll Gmail for new replies on sent messages"
+            >
+              {refreshingReplies ? "Checking…" : "Refresh replies"}
+            </Button>
+          )}
         </div>
       </CardHeader>
+      {refreshNote && (
+        <div className="mx-6 -mt-1 rounded-md border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs text-sky-900">
+          {refreshNote}
+        </div>
+      )}
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
         <div className="flex rounded-md border bg-muted/60 p-0.5 text-sm">
-          {(["paste", "csv", "manual"] as const).map((m) => (
+          {(["manual", "paste", "csv"] as const).map((m) => (
             <button
               key={m}
               onClick={() => setMode(m)}
@@ -293,6 +350,8 @@ export function RecipientPanel({
                 recipient={r}
                 defaultSignature={defaultSignature}
                 providerAccountId={providerAccountId}
+                attachResume={attachResume}
+                hasResume={hasResume}
                 onPatch={(body) => patch(r.id, body)}
                 onReplaceRecipient={replaceRecipient}
                 onRemove={() => remove(r.id)}
@@ -309,7 +368,7 @@ function Pill({
   tone,
   children,
 }: {
-  tone: "muted" | "ok" | "err";
+  tone: "muted" | "ok" | "err" | "reply";
   children: React.ReactNode;
 }) {
   const cls =
@@ -317,7 +376,9 @@ function Pill({
       ? "bg-emerald-100 text-emerald-900 border-emerald-200"
       : tone === "err"
         ? "bg-destructive/10 text-destructive border-destructive/30"
-        : "bg-muted text-muted-foreground border-border";
+        : tone === "reply"
+          ? "bg-sky-100 text-sky-900 border-sky-200"
+          : "bg-muted text-muted-foreground border-border";
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${cls}`}>
       {children}

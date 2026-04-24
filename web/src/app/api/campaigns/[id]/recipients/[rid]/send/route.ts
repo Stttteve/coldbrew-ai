@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { recipientToClientJson } from "@/lib/campaigns/recipient-json";
 import { withAppendedSignature } from "@/lib/email/compose-signature";
+import { withAppendedResumeMention } from "@/lib/email/resume-mention";
 import { collectOutboundAttachments } from "@/lib/email/collect-outbound-attachments";
 import { prisma } from "@/lib/db";
 import {
@@ -42,18 +43,20 @@ export const POST = withErrorHandler(
     if (!r || r.campaignId !== campaign.id) {
       throw new HttpError(404, "recipient_not_found");
     }
-    if (r.status === "sent") {
-      throw new HttpError(400, "already_sent", "This recipient was already sent.");
-    }
+    // Allow re-sending: a previous "sent" recipient can be sent again (e.g.
+    // follow-up after edits). This appends another message to the thread —
+    // Gmail handles it as a reply if the In-Reply-To is preserved (we don't
+    // set it explicitly, so it'll be a fresh message in the same thread).
     if (
       r.status !== "drafted" &&
       r.status !== "approved" &&
-      r.status !== "pushed"
+      r.status !== "pushed" &&
+      r.status !== "sent"
     ) {
       throw new HttpError(
         400,
         "cannot_send",
-        "Need a generated draft (drafted, approved, or pushed) before sending.",
+        "Need a generated draft before sending.",
       );
     }
     if (!r.email?.trim() || !r.subject?.trim() || !r.body?.trim()) {
@@ -105,7 +108,10 @@ export const POST = withErrorHandler(
         to: [{ email: r.email, name: r.name ?? undefined }],
         subject: r.subject,
         bodyText: withAppendedSignature(
-          r.body,
+          withAppendedResumeMention(r.body, {
+            attachResume: campaign.attachResume,
+            hasResume: Boolean(user?.resumeStorageKey),
+          }),
           user?.defaultSignature ?? null,
         ),
         campaignId: campaign.id,
@@ -116,6 +122,7 @@ export const POST = withErrorHandler(
         data: {
           status: RecipientStatus.sent,
           providerDraftId: result.providerMessageId,
+          providerThreadId: result.providerThreadId ?? null,
           deepLink: result.deepLink,
           errorReason: null,
         },

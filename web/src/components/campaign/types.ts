@@ -36,4 +36,10 @@ export interface RecipientView {
   errorReason: string | null;
   /** Per-recipient files attached on Gmail push/send. */
   extraAttachments?: ExtraAttachmentView[];
+  /** Reply tracking (populated after send + a poll cycle). */
+  repliedAt?: string | null;
+  replyCount?: number;
+  lastReplyAt?: string | null;
+  lastReplyFrom?: string | null;
+  lastReplySnippet?: string | null;
 }

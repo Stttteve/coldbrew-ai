@@ -197,16 +197,32 @@ model RecipientDraft {
   referencedFacts   String[]
   status            RecipientStatus @default(pending)
   providerDraftId   String?
+  /// Gmail thread id (captured when a draft/send is created) — used to poll for replies.
+  providerThreadId  String?
   deepLink          String?
   errorReason       String?
   /// Per-recipient extra files for Gmail: [{ id, storageKey, fileName, mimeType, size }]
   extraAttachments  Json?
+  /// Timestamp of the first detected reply. Null until we observe one.
+  repliedAt         DateTime?
+  /// Count of detected reply messages on the thread (incoming only).
+  replyCount        Int             @default(0)
+  /// Timestamp of the most recently observed reply.
+  lastReplyAt       DateTime?
+  /// "From" of the most recent reply (raw header value).
+  lastReplyFrom     String?
+  /// Short snippet of the most recent reply body.
+  lastReplySnippet  String?
+  /// Last time the reply-poller checked this thread.
+  lastCheckedAt     DateTime?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId])
+  @@index([providerThreadId])
+  @@index([repliedAt])
 }
 
 model EnrichmentCache {

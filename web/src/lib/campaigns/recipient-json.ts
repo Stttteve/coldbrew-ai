@@ -21,6 +21,11 @@ export type RecipientClientJson = {
   deepLink: string | null;
   errorReason: string | null;
   extraAttachments: ExtraAttachmentView[];
+  repliedAt: string | null;
+  replyCount: number;
+  lastReplyAt: string | null;
+  lastReplyFrom: string | null;
+  lastReplySnippet: string | null;
 };
 
 export function recipientToClientJson(r: RecipientDraft): RecipientClientJson {
@@ -40,5 +45,10 @@ export function recipientToClientJson(r: RecipientDraft): RecipientClientJson {
     deepLink: r.deepLink,
     errorReason: r.errorReason,
     extraAttachments: toAttachmentViews(extras),
+    repliedAt: r.repliedAt?.toISOString() ?? null,
+    replyCount: r.replyCount,
+    lastReplyAt: r.lastReplyAt?.toISOString() ?? null,
+    lastReplyFrom: r.lastReplyFrom,
+    lastReplySnippet: r.lastReplySnippet,
   };
 }
